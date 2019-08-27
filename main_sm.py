@@ -1,6 +1,7 @@
 from torch.utils.data import DataLoader
 from IVUSDataset import *
 import network 
+from network import PairNet
 import argparse
 import time
 from tensorboardX import SummaryWriter

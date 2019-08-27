@@ -33,7 +33,7 @@ def train(model, criterion, optimizer, input_img_gt, hps):
         loss = criterion(D, input_img_gt['gt_g'].squeeze(-1))
     elif hps['network']=="PairNet":
         loss =  criterion(D, input_img_gt['gt_d'])
-        
+        loss_l1 = criterion_l1(D, input_img_gt['gt_d'])
     elif hps['network']=="SurfNet" or hps['network']=="SurfSegNSBNet":
         loss =  criterion(D, input_img_gt['gt'])
         loss_l1 = criterion_l1(D, input_img_gt['gt'])
