@@ -27,23 +27,23 @@ def save_checkpoint(states,  path, filename='model_best.pth.tar'):
 def train(model, criterion, optimizer, input_img_gt, hps):
     model.train()
     D = model(input_img_gt['img'])
-    
+    criterion_l1 = nn.L1Loss()
     # print(D.size(), input_img_gt['gt_g'].size())
     if hps['network'] == "UNet" or hps['network'] == "FCN":
         loss = criterion(D, input_img_gt['gt_g'].squeeze(-1))
     elif hps['network']=="PairNet":
         loss =  criterion(D, input_img_gt['gt_d'])
-        criterion_l1 = nn.L1Loss()
-        loss_l1 = criterion_l1(D, input_img_gt['gt_d'])
+        
     elif hps['network']=="SurfNet" or hps['network']=="SurfSegNSBNet":
         loss =  criterion(D, input_img_gt['gt'])
+        loss_l1 = criterion_l1(D, input_img_gt['gt'])
     else:
         raise AttributeError('Network not implemented!')
 
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    if hps['network']=="PairNet":
+    if hps['network']=="PairNet" or hps['network']=="SurfSegNSBNet":
         return loss_l1.detach().cpu().numpy()
     return loss.detach().cpu().numpy()
 # val
@@ -52,18 +52,19 @@ def train(model, criterion, optimizer, input_img_gt, hps):
 def val(model, criterion, input_img_gt, hps):
     model.eval()
     D = model(input_img_gt['img'])
+    criterion_l1 = nn.L1Loss()
     # print(output.size(), input_img_gt['gaus_gt'].size())
     if hps['network'] == "UNet" or hps['network'] == "FCN":
         loss = criterion(D, input_img_gt['gt_g'].squeeze(-1))
     elif hps['network']=="PairNet":
         loss =  criterion(D, input_img_gt['gt_d'])
-        criterion_l1 = nn.L1Loss()
         loss_l1 = criterion_l1(D, input_img_gt['gt_d'])
     elif hps['network']=="SurfNet" or hps['network']=="SurfSegNSBNet":
         loss =  criterion(D, input_img_gt['gt'])
+        loss_l1 = criterion_l1(D, input_img_gt['gt'])
     else:
         raise AttributeError('Network not implemented!')
-    if hps['network']=="PairNet":
+    if hps['network']=="PairNet" or hps['network']=="SurfSegNSBNet":
         return loss_l1.detach().cpu().numpy()
     return  loss.detach().cpu().numpy()
 # learn
@@ -289,9 +290,9 @@ def infer(model, hps):
             cartpolar = CartPolar(np.array(img.shape)/2.,
                                 phy_radius, 256, 128)
             pred = cartpolar.gt2cart(pred)
-            if not os.path.isdir(hps.test.pred_dir):
-                os.mkdir(hps.test.pred_dir)
-            pred_dir = os.path.join(hps.test.pred_dir,batch['gt_dir'][0].split("/")[-1])
+            if not os.path.isdir(hps['test']['pred_dir']):
+                os.mkdir(hps['test']['pred_dir'])
+            pred_dir = os.path.join(hps['test']['pred_dir'],batch['gt_dir'][0].split("/")[-1])
             pred = np.transpose(np.stack(pred, axis=0))
         
             np.savetxt(pred_dir, pred, delimiter=',')

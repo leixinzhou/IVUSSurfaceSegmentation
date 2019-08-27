@@ -126,6 +126,7 @@ class IVUSDataset(Dataset):
         input_img_gt['gt_dir'] = gt_dir
         input_img_gt['img_dir'] = img_dir
         # add gt_d to the output
+        input_img_gt['gt'] = np.squeeze(input_img_gt['gt'], axis=1)
         input_img_gt['gt_d'] = input_img_gt['gt'][:-1] - input_img_gt['gt'][1:]
     
         return input_img_gt

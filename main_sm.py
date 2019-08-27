@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 from IVUSDataset import *
-from nets import SurfNetPair
+import network 
 import argparse
 import time
 from tensorboardX import SummaryWriter
@@ -107,10 +107,12 @@ def learn(model, hps):
     val_loader = DataLoader(val_dataset, shuffle=False,
                             batch_size=hps['learning']['batch_size'], num_workers=0)
     # The parameters are distributed in three parts: U_net, P_net, w_comp. Here we fix the P_net.
-    optimizer_U = getattr(optim, hps['learning']['optimizer'])(
-        [{'params': model.Surfnet.U_net.parameters(), 'lr': hps['learning']['U_lr']}])
-    optimizer_W = getattr(optim, hps['learning']['optimizer'])(
-        [{'params': model.w_comp, 'lr': hps['learning']['W_lr']}])
+    optimizer_unary = getattr(optim, hps['learning']['optimizer'])(
+        [{'params': model.unary.parameters(), 'lr': hps['learning']['lr_unary']}
+         ])
+    optimizer_pair = getattr(optim, hps['learning']['optimizer'])(
+        [{'params': model.w_comp, 'lr': hps['learning']['lr_pair']}
+         ])
     # scheduler = getattr(optim.lr_scheduler,
     #                     hps.learning.scheduler)(optimizer, factor=hps.learning.scheduler_params.factor,
     #                                             patience=hps.learning.scheduler_params.patience,
@@ -122,57 +124,16 @@ def learn(model, hps):
         raise AttributeError(hps['learning']['loss']+" is not implemented!")
     # criterion_KLD = torch.nn.KLDivLoss()
 
-    if os.path.isfile(hps['learning']['resume_path']):
-        print('loading checkpoint: {}'.format(hps['learning']['resume_path']))
-        checkpoint = torch.load(hps['learning']['resume_path'])
-        model.U_net.load_state_dict(checkpoint['state_dict'])
-        print("=> loaded checkpoint (epoch {})"
-              .format(checkpoint['epoch']))
-    else:
-        if os.path.isfile(hps['learning']['U_resume_path']):
-            print('loading checkpoint: {}'.format(hps['learning']['U_resume_path']))
-            checkpoint = torch.load(hps['learning']['U_resume_path'])
-            model.Surfnet.load_state_dict(checkpoint['state_dict'])
-            print("=> loaded checkpoint (epoch {})"
-                .format(checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(hps['learning']['U_resume_path']))
-
-        if os.path.isfile(hps['learning']['P_resume_path']):
-            print('loading checkpoint: {}'.format(hps['learning']['P_resume_path']))
-            checkpoint = torch.load(hps['learning']['P_resume_path'])
-            model.P_net.load_state_dict(remove_module_prefix_by_para(checkpoint['state_dict']))
-            print("=> loaded checkpoint (epoch {})"
-                .format(checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(hps['learning']['P_resume_path']))
-
     epoch = 0
     best_loss = hps['learning']['best_loss']
 
     for epoch_tmp in range(0, hps['learning']['total_iterations']):
-        for epoch_unet_tmp in range(0, hps['learning']['U_iterations']):
-            tr_loss = 0
-            tr_mb = 0
-            for step, batch in enumerate(tr_loader):
-                batch = {key: value.float().cuda()
-                        for (key, value) in batch.items() if key not in ["gt_dir", "cartpolar", "img_dir"]}
-                m_batch_loss = train(model, loss_func, optimizer_U, batch, hps)
-                tr_loss += m_batch_loss
-                tr_mb += 1
-            epoch_tr_loss = tr_loss / tr_mb
-            writer.add_scalar('data/train_loss', epoch_tr_loss, epoch)
-            print("Epoch: " + str(epoch))
-            print("     tr_loss: " + "%.5e" % epoch_tr_loss)
-            epoch += 1
-
-        for epoch_smoother_tmp in range(0, hps['learning']['W_iterations']):
+        for epoch_smoother_tmp in range(0, hps['learning']['pair_iterations']):
             tr_loss = 0
             tr_mb = 0
             for step, batch in enumerate(val_loader):
-                batch = {key: value.float().cuda()
-                        for (key, value) in batch.items() if key not in ["gt_dir", "cartpolar", "img_dir"]}
-                m_batch_loss = train(model, loss_func, optimizer_W, batch, hps)
+                batch = {key: value.float().cuda() for (key, value) in batch.items() if "dir" not in key}
+                m_batch_loss = train(model, loss_func, optimizer_pair, batch, hps)
                 tr_loss += m_batch_loss
                 tr_mb += 1
             epoch_tr_loss = tr_loss / tr_mb
@@ -180,31 +141,55 @@ def learn(model, hps):
             w_comp = model.w_comp.detach().cpu().numpy()
             writer.add_scalar('data/w_comp', w_comp)
             print("Epoch: " + str(epoch))
-            print("     tr_loss: " + "%.5e" % epoch_tr_loss + " w_comp: " + "%.5e" % w_comp)
+            print("     tr_loss pair: " + "%.5e" % epoch_tr_loss + " w_comp: " + "%.5e" % w_comp)
             epoch += 1
 
-        val_loss = 0
-        val_mb = 0
-        for step, batch in enumerate(val_loader):
-            batch = {key: value.float().cuda()
-                     for (key, value) in batch.items() if key not in ["gt_dir", "cartpolar", "img_dir"]}
-            m_batch_loss = val(model, loss_func, batch, hps)
-            val_loss += m_batch_loss
-            val_mb += 1
-        epoch_val_loss = val_loss / val_mb
-        writer.add_scalar('data/val_loss', epoch_val_loss, epoch_tmp)
-        print("     val_loss: " + "%.5e" % epoch_val_loss)
+            if epoch_tr_loss < best_loss:
+                best_loss = epoch_tr_loss
+                save_checkpoint(
+                    {
+                        'epoch': epoch,
+                        'state_dict': model.state_dict(),
+                        'best_loss': best_loss
+                    },
+                    path=hps['learning']['checkpoint_path'],
+                )
+        for epoch_unet_tmp in range(0, hps['learning']['unary_iterations']):
+            tr_loss = 0
+            tr_mb = 0
+            for step, batch in enumerate(tr_loader):
+                batch = {key: value.float().cuda() for (key, value) in batch.items() if "dir" not in key}
+                m_batch_loss = train(model, loss_func, optimizer_unary, batch, hps)
+                tr_loss += m_batch_loss
+                tr_mb += 1
+            epoch_tr_loss = tr_loss / tr_mb
+            writer.add_scalar('data/train_loss', epoch_tr_loss, epoch)
+            print("Epoch: " + str(epoch))
+            print("     tr_loss: " + "%.5e" % epoch_tr_loss)
+            epoch += 1
+            val_loss = 0
+            val_mb = 0
+            for step, batch in enumerate(val_loader):
+                batch = {key: value.float().cuda() for (key, value) in batch.items() if "dir" not in key}
+                m_batch_loss = val(model, loss_func,  batch, hps)
+                val_loss += m_batch_loss
+                val_mb += 1
+            epoch_val_loss = val_loss / val_mb
+            writer.add_scalar('data/val_loss', epoch_val_loss, epoch)
+            print("     val_loss: " + "%.5e" % epoch_val_loss)
+            if epoch_val_loss < best_loss:
+                best_loss = epoch_val_loss
+                save_checkpoint(
+                    {
+                        'epoch': epoch,
+                        'state_dict': model.state_dict(),
+                        'best_loss': best_loss
+                    },
+                    path=hps['learning']['checkpoint_path'],
+                )
 
-        if epoch_val_loss < best_loss:
-            best_loss = epoch_val_loss
-            save_checkpoint(
-                {
-                    'epoch': epoch,
-                    'state_dict': model.state_dict(),
-                    'best_loss': best_loss
-                },
-                path=hps['learning']['checkpoint_path'],
-            )
+
+        
 
     writer.export_scalars_to_json(os.path.join(
         hps['learning']['checkpoint_path'], "all_scalars.json"))
