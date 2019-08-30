@@ -260,8 +260,8 @@ class PairNet(nn.Module):
                 t_list.append(x[:,:,:-1])
                 t_list.append(x[:,:,1:])
             else:
-                t_list.append(torch.cat((x[:,:,0:1].expand(-1,-1,i), x[:,:,:-(i+1)]), -1))
-                t_list.append(torch.cat((x[:,:,i+1:], x[:,:,-1:].expand(-1,-1,i)), -1))
+                t_list.append(torch.cat((x[:,:,-i:], x[:,:,:-(i+1)]), -1))
+                t_list.append(torch.cat((x[:,:,i+1:], x[:,:,:i]), -1))
         t_list = torch.cat(t_list, 1)
         # print(t_list.size())
         D = self.FC_D1(t_list)
